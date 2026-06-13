@@ -1,0 +1,283 @@
+```javascript
+// models/User.js
+const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
+
+const userSchema = new mongoose.Schema({
+  email: {
+    type: String,
+    required: true,
+    unique: true,
+    lowercase: true,
+    trim: true
+  },
+  password: {
+    type: String,
+    required: true
+  },
+  profile: {
+    firstName: String,
+    lastName: String,
+    phoneNumber: String,
+    profilePicture: String,
+    bio: String,
+    birthDate: Date,
+    country: String,
+    city: String
+  },
+  createdAt: {
+    type: Date,
+    default: Date.now
+  },
+  updatedAt: {
+    type: Date,
+    default: Date.now
+  }
+});
+
+// تشفير كلمة المرور قبل الحفظ
+userSchema.pre('save', async function(next) {
+  if (!this.isModified('password')) return next();
+  
+  try {
+    const salt = await bcrypt.genSalt(10);
+    this.password = await bcrypt.hash(this.password, salt);
+    next();
+  } catch (error) {
+    next(error);
+  }
+});
+
+// طريقة للتحقق من كلمة المرور
+userSchema.methods.comparePassword = async function(passwordInput) {
+  return await bcrypt.compare(passwordInput, this.password);
+};
+
+module.exports = mongoose.model('User', userSchema);
+```
+
+```javascript
+// routes/auth.js
+const express = require('express');
+const router = express.Router();
+const User = require('../models/User');
+const jwt = require('jsonwebtoken');
+
+// تسجيل حساب جديد
+router.post('/register', async (req, res) => {
+  try {
+    const { email, password, passwordConfirm, firstName, lastName } = req.body;
+
+    // التحقق من البيانات
+    if (!email || !password || !passwordConfirm) {
+      return res.status(400).render('register', {
+        message: 'الرجاء إدخال البريد الإلكتروني وكلمة المرور'
+      });
+    }
+
+    if (password !== passwordConfirm) {
+      return res.status(400).render('register', {
+        message: 'كلمات المرور غير متطابقة'
+      });
+    }
+
+    // التحقق من وجود المستخدم
+    const user = await User.findOne({ email });
+    if (user) {
+      return res.status(400).render('register', {
+        message: 'البريد الإلكتروني مستخدم بالفعل'
+      });
+    }
+
+    // إنشاء مستخدم جديد
+    const newUser = await User.create({
+      email,
+      password,
+      profile: {
+        firstName: firstName || '',
+        lastName: lastName || ''
+      }
+    });
+
+    // إنشاء JWT Token
+    const token = jwt.sign({ id: newUser._id }, process.env.JWT_SECRET, {
+      expiresIn: '7d'
+    });
+
+    // حفظ التوكن في الكوكيز
+    res.cookie('jwt', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      maxAge: 7 * 24 * 60 * 60 * 1000
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: 'تم إنشاء الحساب بنجاح',
+      user: {
+        id: newUser._id,
+        email: newUser.email,
+        profile: newUser.profile
+      }
+    });
+
+  } catch (error) {
+    console.error('خطأ في التسجيل:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'حدث خطأ أثناء التسجيل'
+    });
+  }
+});
+
+// تسجيل الدخول
+router.post('/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({
+        message: 'الرجاء إدخال البريد والية'
+      });
+    }
+
+    const user = await User.findOne({ email });
+
+    if (!user || !(await user.comparePassword(password))) {
+      return res.status(401).json({
+        success: false,
+        message: 'البريد أو كلمة المرور غير صحيحة'
+      });
+    }
+
+    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
+      expiresIn: '7d'
+    });
+
+    res.cookie('jwt', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      maxAge: 7 * 24 * 60 * 60 * 1000
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'تم تسجيلح',
+      user: {
+        id: user._id,
+        email: user.email,
+        profile: user.profile
+      }
+    });
+
+  } catch (error) {
+    console.error('خطأ في تسجيل الدخول:', error);
+    return res.status(500).json({
+      success: false,
+      message: 'حدث خطأ أثناء تسجيل الدخول'
+    });
+  }
+});
+
+module.exports = router;
+```
+
+```javascript
+// routes/profile.js
+const express = require('express');
+const router = express.Router();
+const User = require('../models/User');
+const isLoggedIn = require('../middleware/auth');
+
+// الحصول على الملف الشخصي
+router.get('/profile',, res) => {
+  try {
+    const user = await User.findById(req.user.id);
+    
+    res.status(200).json({
+      success: true,
+      profile: user.profile
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'حدث خطأ في جلب الملف الشخصي'
+    });
+  }
+});
+
+// تحديث الملف الشخصي
+router.put('/profile/update', isLoggedIn, async (req, res) => {
+  try {
+    const { firstName, lastName, phoneNumber, bio, birthDate, country, city } = req.body;
+
+    const user = await User.findByIdAndUpdate(
+      req.user.id,
+      {
+        profilelastName,
+          phoneNumber,
+          bio,
+          birthDate,
+          country,
+          city
+        },
+        updatedAt: Date.now()
+      },
+      { new: true }
+    );
+
+    res.status(200).json({
+      success: true,
+      message: 'تم تحديث الملف الشخصي بنجاح',
+      profile: user.profile
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'حدث خطأ في تحديث الملف الشخصي'
+    });
+  }
+});
+
+module.exports = router;
+```
+
+```javascript
+// middleware/auth.js
+const jwt = require('jsonwebtoken');
+
+const isLoggedIn = (req, res, next) => {
+  const token
+
+  if (!token) {
+    return res.status(401).json({
+      message: 'يجب تسجيل الدخول أولاً'
+    });
+  }
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    req.user = decoded;
+    next();
+  } catch (error) {
+    return res.status(401).json({
+      message: 'الجلسة منتهية الصلاحية'
+    });
+  }
+};
+
+module.exports = isLoggedIn;
+```
+
+```javascript
+// app.js
+const express = require('express');
+const cookieParser = require('cookie-parser');
+const mongoose = require('mongoose');
+require('dotenv').config();
+
+const app = express();
+
+// الا MongoDB
+mongoose.connect(process.env.DB_URL
